@@ -25,8 +25,8 @@ export const addToWatchlist = async (userId, mediaId, mediaType, posterPath, tit
     userId,
     mediaId: Number(mediaId),
     mediaType,
-    posterPath,
-    title,
+    posterPath: posterPath || null,
+    title: title || "",
     createdAt: serverTimestamp(),
   });
 };
@@ -43,13 +43,22 @@ export const checkInWatchlist = async (userId, mediaId, mediaType) => {
 };
 
 export const getUserWatchlist = async (userId) => {
-  const q = query(
-    collection(db, "watchlist"),
-    where("userId", "==", userId),
-    orderBy("createdAt", "desc")
-  );
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  try {
+    const q = query(
+      collection(db, "watchlist"),
+      where("userId", "==", userId)
+    );
+    const snapshot = await getDocs(q);
+    const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    return list.sort((a, b) => {
+      const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+      const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+      return timeB - timeA;
+    });
+  } catch (error) {
+    console.error("Error in getUserWatchlist:", error);
+    return [];
+  }
 };
 
 // ==================== RATINGS ====================
@@ -77,16 +86,21 @@ export const getUserRating = async (userId, mediaId, mediaType) => {
 };
 
 export const getMediaRatings = async (mediaId, mediaType) => {
-  const q = query(
-    collection(db, "ratings"),
-    where("mediaId", "==", Number(mediaId)),
-    where("mediaType", "==", mediaType)
-  );
-  const snapshot = await getDocs(q);
-  const ratings = snapshot.docs.map((doc) => doc.data().score);
-  if (ratings.length === 0) return { average: 0, count: 0 };
-  const average = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
-  return { average: Math.round(average * 10) / 10, count: ratings.length };
+  try {
+    const q = query(
+      collection(db, "ratings"),
+      where("mediaId", "==", Number(mediaId)),
+      where("mediaType", "==", mediaType)
+    );
+    const snapshot = await getDocs(q);
+    const ratings = snapshot.docs.map((doc) => doc.data().score);
+    if (ratings.length === 0) return { average: 0, count: 0 };
+    const average = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
+    return { average: Math.round(average * 10) / 10, count: ratings.length };
+  } catch (error) {
+    console.error("Error in getMediaRatings:", error);
+    return { average: 0, count: 0 };
+  }
 };
 
 // ==================== COMMENTS ====================
@@ -107,12 +121,21 @@ export const deleteComment = async (commentId) => {
 };
 
 export const getComments = async (mediaId, mediaType) => {
-  const q = query(
-    collection(db, "comments"),
-    where("mediaId", "==", Number(mediaId)),
-    where("mediaType", "==", mediaType),
-    orderBy("createdAt", "desc")
-  );
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  try {
+    const q = query(
+      collection(db, "comments"),
+      where("mediaId", "==", Number(mediaId)),
+      where("mediaType", "==", mediaType)
+    );
+    const snapshot = await getDocs(q);
+    const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    return list.sort((a, b) => {
+      const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+      const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+      return timeB - timeA;
+    });
+  } catch (error) {
+    console.error("Error in getComments:", error);
+    return [];
+  }
 };

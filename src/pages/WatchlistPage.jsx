@@ -6,13 +6,14 @@ import { posterUrl } from "../api/tmdbApi";
 import { FiTrash2, FiFilm } from "react-icons/fi";
 
 export default function WatchlistPage() {
-  const { user, isAuthenticated } = useSelector((state) => state.auth);
+  const { user, isAuthenticated, loading: authLoading } = useSelector((state) => state.auth);
   const navigate = useNavigate();
   const [watchlist, setWatchlist] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (authLoading) return;
+    if (!isAuthenticated || !user) {
       navigate("/auth");
       return;
     }
@@ -26,7 +27,7 @@ export default function WatchlistPage() {
       setLoading(false);
     };
     fetchWatchlist();
-  }, [isAuthenticated, user, navigate]);
+  }, [isAuthenticated, authLoading, user, navigate]);
 
   const handleRemove = async (mediaId, mediaType) => {
     try {
