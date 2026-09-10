@@ -66,6 +66,7 @@ export default async function handler(req, res) {
     console.error("Chat API error:", error);
     return res.status(500).json({
       error: "Có lỗi xảy ra khi xử lý yêu cầu. Vui lòng thử lại.",
+      debug: error.message || String(error),
     });
   }
 }
