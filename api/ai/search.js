@@ -49,8 +49,23 @@ export default async function handler(req, res) {
       },
     });
 
-    const result = await model.generateContent(query.trim());
-    const text = result.response.text();
+    // Retry logic for 503 errors
+    let text = "";
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const result = await model.generateContent(query.trim());
+        text = result.response.text();
+        break;
+      } catch (err) {
+        lastError = err;
+        if (String(err).includes("503") && attempt < 2) {
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+          continue;
+        }
+        throw err;
+      }
+    }
 
     let movies = [];
     try {

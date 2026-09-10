@@ -58,10 +58,23 @@ export default async function handler(req, res) {
       history: chatHistory,
     });
 
-    const result = await chat.sendMessage(message.trim());
-    const reply = result.response.text();
-
-    return res.status(200).json({ reply });
+    // Retry logic for 503 errors
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const result = await chat.sendMessage(message.trim());
+        const reply = result.response.text();
+        return res.status(200).json({ reply });
+      } catch (err) {
+        lastError = err;
+        if (String(err).includes("503") && attempt < 2) {
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastError;
   } catch (error) {
     console.error("Chat API error:", error);
     return res.status(500).json({

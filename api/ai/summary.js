@@ -56,8 +56,21 @@ export default async function handler(req, res) {
 
     const prompt = `Phim: ${movieTitle || "Không rõ"}\nĐiểm trung bình: ${averageRating || "N/A"}/10\nSố bình luận: ${comments.length}\n\nCác bình luận:\n${commentText}`;
 
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    // Retry logic for 503 errors
+    let text = "";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const result = await model.generateContent(prompt);
+        text = result.response.text();
+        break;
+      } catch (err) {
+        if (String(err).includes("503") && attempt < 2) {
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+          continue;
+        }
+        throw err;
+      }
+    }
 
     let parsed;
     try {
