@@ -60,7 +60,7 @@ export default async function handler(req, res) {
 
     // Retry logic for 503 errors
     let lastError;
-    for (let attempt = 0; attempt < 15; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const result = await chat.sendMessage(message.trim());
         const reply = result.response.text();
@@ -68,7 +68,7 @@ export default async function handler(req, res) {
       } catch (err) {
         lastError = err;
         if (String(err).includes("503") && attempt < 2) {
-          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+          await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
           continue;
         }
         throw err;
@@ -76,9 +76,7 @@ export default async function handler(req, res) {
     }
     throw lastError;
   } catch (error) {
-    console.error("Chat API error:", error);
     console.error("Chat API error:", error.message);
-
     return res.status(500).json({
       error: "Có lỗi xảy ra khi xử lý yêu cầu. Vui lòng thử lại.",
       debug: error.message || String(error),

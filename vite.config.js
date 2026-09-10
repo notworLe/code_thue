@@ -7,4 +7,12 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  server: {
+    proxy: {
+      '/api/ai': {
+        target: 'https://danh-gia-phim.vercel.app',
+        changeOrigin: true,
+      },
+    },
+  },
 })
