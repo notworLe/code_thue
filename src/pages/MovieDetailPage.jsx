@@ -18,6 +18,7 @@ import {
 import RatingBar from "../components/RatingBar";
 import CommentSection from "../components/CommentSection";
 import TrailerModal from "../components/TrailerModal";
+import ReviewSummary from "../components/ReviewSummary";
 import MovieCard from "../components/MovieCard";
 import { FiPlay, FiHeart, FiCalendar, FiClock } from "react-icons/fi";
 
@@ -279,6 +280,9 @@ export default function MovieDetailPage() {
             </div>
           </section>
         )}
+
+        {/* AI Review Summary */}
+        <ReviewSummary mediaId={id} mediaType={mediaType} movieTitle={title} />
 
         {/* Comments */}
         <CommentSection mediaId={id} mediaType={mediaType} />

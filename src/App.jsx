@@ -15,6 +15,7 @@ import AuthPage from "./pages/AuthPage";
 import MovieDetailPage from "./pages/MovieDetailPage";
 import PersonDetailPage from "./pages/PersonDetailPage";
 import WatchlistPage from "./pages/WatchlistPage";
+import ChatWidget from "./components/ChatWidget";
 
 function AuthListener() {
   const dispatch = useDispatch();
@@ -51,6 +52,7 @@ function AppContent() {
           </Routes>
         </main>
         <Footer />
+        <ChatWidget />
       </div>
     </BrowserRouter>
   );
