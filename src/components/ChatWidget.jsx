@@ -52,7 +52,11 @@ export default function ChatWidget() {
     setLoading(true);
 
     try {
-      const history = messages.filter((m) => m.role !== "system");
+      // Filter out welcome message and error messages, ensure starts with user
+      const history = messages
+        .filter((m) => m.role !== "system")
+        .filter((m) => !m.content.includes("⚠️"))
+        .slice(1); // skip welcome message
       const res = await fetch(`${AI_API_BASE}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
