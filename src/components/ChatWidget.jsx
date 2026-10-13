@@ -47,41 +47,54 @@ export default function ChatWidget() {
     if (!text || loading) return;
 
     const userMsg = { role: "user", content: text };
-    setMessages((prev) => [...prev, userMsg]);
+    const currentMessages = [...messages, userMsg];
+    setMessages(currentMessages);
     setInput("");
     setLoading(true);
 
     try {
-      // Filter out welcome message and error messages, ensure starts with user
-      const history = messages
-        .filter((m) => m.role !== "system")
-        .filter((m) => !m.content.includes("⚠️"))
-        .slice(1); // skip welcome message
+      // Chỉ gửi messages không phải lỗi, bỏ welcome message, phải bắt đầu bằng user
+      const history = currentMessages
+        .filter((m) => m.role !== "system" && !m.isError)
+        .slice(1); // bỏ welcome message
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000); // browser-side timeout 15s
+
       const res = await fetch(`${AI_API_BASE}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, history }),
+        signal: controller.signal,
       });
-
-      if (!res.ok) throw new Error("API error");
+      clearTimeout(timeout);
 
       const data = await res.json();
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: data.reply },
-      ]);
+
+      if (!res.ok) {
+        // Hiện message phù hợp theo errorType từ backend
+        const errorMessages = {
+          timeout: "⏱️ AI đang xử lý chậm, thử lại nhé!",
+          all_quota: "⚠️ AI đang bận (hết lượt). Thử lại sau vài phút!",
+          all_failed: "🔴 AI tạm thời không khả dụng. Thử lại sau!",
+          config: "🔧 Cấu hình API chưa đúng. Liên hệ admin!",
+          error: "⚠️ Có lỗi xảy ra. Thử lại nhé!",
+        };
+        const msg = errorMessages[data.errorType] || data.error || errorMessages.error;
+        setMessages((prev) => [...prev, { role: "assistant", content: msg, isError: true }]);
+        return;
+      }
+
+      setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
     } catch (err) {
       console.error("Chat error:", err);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content:
-            "⚠️ Xin lỗi, tôi đang gặp sự cố. Vui lòng thử lại sau nhé!",
-        },
-      ]);
+      const msg = err.name === "AbortError"
+        ? "⏱️ Yêu cầu mất quá lâu. Thử lại nhé!"
+        : "⚠️ Không thể kết nối. Kiểm tra mạng và thử lại!";
+      setMessages((prev) => [...prev, { role: "assistant", content: msg, isError: true }]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleKeyDown = (e) => {

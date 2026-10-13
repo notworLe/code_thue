@@ -3,31 +3,30 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 /**
- * Model fallback chain — thứ tự ưu tiên:
- * 1. Thử model đầu tiên
- * 2. Nếu 429 (quota) hoặc 503 (overload) → thử model tiếp theo
- * 3. Nếu 404 (not found) → skip, thử tiếp
- * 4. Nếu hết tất cả → trả lỗi rõ ràng
+ * MODEL_CHAIN — thứ tự ưu tiên:
+ * - Models ✅ OK để trước (nhanh nhất)
+ * - Models ⚠️ quota để sau (tự reset hàng ngày)
+ * - Khi 429 quota → tự nhảy sang model tiếp theo
+ * - Khi 503 busy → retry 1 lần → nhảy tiếp
+ * - Khi 404 missing → skip ngay
+ * - Khi TIMEOUT → báo ngay (không thử tiếp, tránh chờ lâu)
  */
 const MODEL_CHAIN = [
-  "gemini-3-flash-preview",   // ✅ 1.06s - fast & working
-  "gemini-3.8-flash",         // 🔄 busy → recovers
-  "gemini-4-argon",           // ⚠️ quota → resets daily
-  "gemini-3.6-flash",         // ⚠️ quota → resets daily
-  "gemini-3.5-flash",         // ⚠️ quota → resets daily
-  "gemini-3.1-pro-preview",   // ⚠️ quota → resets daily
-  // gemini-3.1-flash-lite   → 7.91s, quá chậm cho Vercel 10s timeout
-  // gemini-3.5-flash-lite   → timeout/error
-  // gemini-2.5-*            → 404 not available on this key
+  "gemini-3-flash-preview",   // ✅ confirmed 1.06s
+  "gemini-3.8-flash",         // 🔄 busy → may recover
+  "gemini-4-argon",           // ⚠️ quota resets daily
+  "gemini-3.6-flash",         // ⚠️ quota resets daily
+  "gemini-3.5-flash",         // ⚠️ quota resets daily
+  "gemini-3.1-pro-preview",   // ⚠️ quota resets daily
 ];
 
 const SYSTEM_PROMPT = `Bạn là trợ lý AI tư vấn phim trên website MovieReview.
 
 Nhiệm vụ:
-- Gợi ý phim phù hợp với yêu cầu của người dùng (tâm trạng, thể loại, hoàn cảnh)
-- Trả lời câu hỏi về nội dung phim (KHÔNG spoil cốt truyện chính)
+- Gợi ý phim phù hợp với yêu cầu (tâm trạng, thể loại, hoàn cảnh)
+- Trả lời câu hỏi về nội dung phim (KHÔNG spoil)
 - So sánh phim khi được yêu cầu
-- Đề xuất 2-4 phim, kèm tên gốc, năm sản xuất, và mô tả ngắn 1-2 câu
+- Đề xuất 2-4 phim, kèm tên gốc, năm, mô tả ngắn 1-2 câu
 
 Quy tắc:
 - Trả lời bằng tiếng Việt
@@ -35,60 +34,70 @@ Quy tắc:
 - Ngắn gọn, tối đa 200 từ
 - Không trả lời câu hỏi ngoài chủ đề phim/giải trí/diễn viên`;
 
-/**
- * Phân loại lỗi Gemini API
- * @returns "quota" | "overload" | "not_found" | "error"
- */
-function classifyError(err) {
-  const msg = String(err);
-  if (msg.includes("429")) return "quota";
-  if (msg.includes("503")) return "overload";
-  if (msg.includes("404")) return "not_found";
+// Per-model timeout (ms) — phải < Vercel 10s limit
+const MODEL_TIMEOUT_MS = 8000;
+
+function classifyError(msg) {
+  const s = String(msg);
+  if (s.includes("429")) return "quota";
+  if (s.includes("503")) return "busy";
+  if (s.includes("404")) return "not_found";
+  if (s.includes("TIMEOUT")) return "timeout";
   return "error";
 }
 
 /**
- * Gọi Gemini với fallback chain
- * Tự động thử model tiếp theo nếu quota/overload/not_found
+ * Gọi Gemini với fallback tự động.
+ * Trả về: { reply, modelUsed } hoặc throw Error với .errorType
  */
 async function callWithFallback(message, chatHistory) {
-  const triedModels = [];
-  let lastError = null;
+  let allQuota = true; // nếu tất cả đều 429 → thông báo riêng
 
   for (const modelName of MODEL_CHAIN) {
-    triedModels.push(modelName);
     try {
       const model = genAI.getGenerativeModel({
         model: modelName,
         systemInstruction: SYSTEM_PROMPT,
-        generationConfig: {
-          maxOutputTokens: 512,
-          temperature: 0.7,
-        },
+        generationConfig: { maxOutputTokens: 512, temperature: 0.7 },
       });
 
       const chat = model.startChat({ history: chatHistory });
-      const result = await chat.sendMessage(message);
-      const reply = result.response.text();
 
-      // Log model được dùng để dễ debug
-      console.log(`[AI] Model used: ${modelName}`);
+      // Race với timeout để tránh chờ quá lâu
+      const result = await Promise.race([
+        chat.sendMessage(message),
+        new Promise((_, rej) =>
+          setTimeout(() => rej(new Error("TIMEOUT")), MODEL_TIMEOUT_MS)
+        ),
+      ]);
+
+      const reply = result.response.text();
+      console.log(`[AI] ✅ model=${modelName}`);
       return { reply, modelUsed: modelName };
+
     } catch (err) {
-      const errType = classifyError(err);
-      lastError = err;
+      const errType = classifyError(err.message);
+      console.warn(`[AI] ${modelName}: ${errType}`);
+
+      if (errType === "timeout") {
+        // Timeout = Gemini không kịp trả lời — không thử tiếp, báo ngay
+        const e = new Error("Gemini timeout");
+        e.errorType = "timeout";
+        throw e;
+      }
 
       if (errType === "not_found") {
-        console.warn(`[AI] ${modelName}: 404 Not Found — skip`);
-        continue; // Model không tồn tại → thử tiếp
+        allQuota = false;
+        continue; // 404 → skip ngay
       }
+
       if (errType === "quota") {
-        console.warn(`[AI] ${modelName}: 429 Quota exceeded — trying next model`);
-        continue; // Hết quota → thử model khác
+        continue; // 429 → thử model tiếp, giữ allQuota = true
       }
-      if (errType === "overload") {
-        console.warn(`[AI] ${modelName}: 503 Overloaded — trying next model`);
-        // Retry 1 lần sau 1s trước khi chuyển model
+
+      if (errType === "busy") {
+        allQuota = false;
+        // Retry 1 lần sau 1s
         await new Promise((r) => setTimeout(r, 1000));
         try {
           const model = genAI.getGenerativeModel({
@@ -97,26 +106,30 @@ async function callWithFallback(message, chatHistory) {
             generationConfig: { maxOutputTokens: 512, temperature: 0.7 },
           });
           const chat = model.startChat({ history: chatHistory });
-          const result = await chat.sendMessage(message);
+          const result = await Promise.race([
+            chat.sendMessage(message),
+            new Promise((_, rej) => setTimeout(() => rej(new Error("TIMEOUT")), MODEL_TIMEOUT_MS)),
+          ]);
           const reply = result.response.text();
-          console.log(`[AI] Model used (retry): ${modelName}`);
+          console.log(`[AI] ✅ model=${modelName} (retry)`);
           return { reply, modelUsed: modelName };
         } catch {
-          continue; // Retry vẫn fail → thử model tiếp
+          continue; // retry vẫn lỗi → thử model tiếp
         }
       }
 
-      // Lỗi khác (auth, network...) → dừng luôn
-      console.error(`[AI] ${modelName}: Unexpected error:`, err.message);
-      throw err;
+      // Lỗi khác (auth, network) → dừng luôn
+      allQuota = false;
+      const e = new Error(err.message);
+      e.errorType = "error";
+      throw e;
     }
   }
 
   // Hết cả chain
-  throw new Error(
-    `Tất cả model đều không khả dụng (đã thử: ${triedModels.join(", ")}). ` +
-    `Lỗi cuối: ${lastError?.message?.substring(0, 100)}`
-  );
+  const e = new Error("All models exhausted");
+  e.errorType = allQuota ? "all_quota" : "all_failed";
+  throw e;
 }
 
 export default async function handler(req, res) {
@@ -132,41 +145,42 @@ export default async function handler(req, res) {
   try {
     const { message, history = [] } = req.body;
 
-    if (!message || typeof message !== "string" || !message.trim()) {
+    if (!message?.trim()) {
       return res.status(400).json({ error: "Message is required" });
     }
     if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
+      return res.status(500).json({ errorType: "config", error: "API key chưa được cấu hình." });
     }
 
-    // Build chat history — filter welcome/error messages, must start with user
+    // Build history — bỏ welcome message và error messages, phải bắt đầu bằng user
     const chatHistory = history
       .filter((m) => m.role !== "system")
-      .filter((m) => !m.content?.includes("⚠️"))
-      .slice(1) // skip welcome message
-      .map((msg) => ({
-        role: msg.role === "assistant" ? "model" : "user",
-        parts: [{ text: msg.content }],
+      .filter((m) => !m.isError) // flag từ frontend
+      .slice(1) // skip welcome message (role assistant)
+      .map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
       }));
 
     const { reply, modelUsed } = await callWithFallback(message.trim(), chatHistory);
-
     return res.status(200).json({ reply, model: modelUsed });
-  } catch (error) {
-    console.error("[AI] Chat handler error:", error.message);
 
-    // Phân loại lỗi để trả message phù hợp
-    const errType = classifyError(error);
-    let userMessage = "Có lỗi xảy ra. Vui lòng thử lại sau.";
-    if (errType === "quota") {
-      userMessage = "AI đang quá tải (hết quota). Vui lòng thử lại sau ít phút.";
-    } else if (errType === "overload") {
-      userMessage = "AI đang bận. Vui lòng thử lại sau vài giây.";
-    }
+  } catch (err) {
+    console.error("[AI] Handler error:", err.message);
+    const errorType = err.errorType || "error";
+
+    // Trả errorType để frontend hiện UX phù hợp
+    const messages = {
+      timeout: "AI đang xử lý chậm. Vui lòng thử lại nhé!",
+      all_quota: "AI đang bận (hết lượt dùng). Vui lòng thử lại sau vài phút!",
+      all_failed: "AI tạm thời không khả dụng. Vui lòng thử lại sau!",
+      config: "API chưa được cấu hình.",
+      error: "Có lỗi xảy ra. Vui lòng thử lại!",
+    };
 
     return res.status(500).json({
-      error: userMessage,
-      debug: process.env.NODE_ENV !== "production" ? error.message : undefined,
+      errorType,
+      error: messages[errorType] || messages.error,
     });
   }
 }
