@@ -10,13 +10,15 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
  * 4. Nếu hết tất cả → trả lỗi rõ ràng
  */
 const MODEL_CHAIN = [
-  "gemini-3-flash-preview",
-  "gemini-3.1-flash-lite",
-  "gemini-4-argon",
-  "gemini-3.6-flash",
-  "gemini-3.5-flash",
-  "gemini-3.1-pro-preview",
-  "gemini-3.8-flash",
+  "gemini-3-flash-preview",   // ✅ 1.06s - fast & working
+  "gemini-3.8-flash",         // 🔄 busy → recovers
+  "gemini-4-argon",           // ⚠️ quota → resets daily
+  "gemini-3.6-flash",         // ⚠️ quota → resets daily
+  "gemini-3.5-flash",         // ⚠️ quota → resets daily
+  "gemini-3.1-pro-preview",   // ⚠️ quota → resets daily
+  // gemini-3.1-flash-lite   → 7.91s, quá chậm cho Vercel 10s timeout
+  // gemini-3.5-flash-lite   → timeout/error
+  // gemini-2.5-*            → 404 not available on this key
 ];
 
 const SYSTEM_PROMPT = `Bạn là trợ lý AI tư vấn phim trên website MovieReview.
